@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>睡眠記録</title>
+</head>
+
+<body>
+
+    <h1>睡眠記録</h1>
+    <button id="loginButton">Googleでログイン</button>
+<button id="logoutButton" style="display: none;">ログアウト</button>
+
+<p id="loginStatus">ログインしていません</p>
+
+    <p>寝た時間</p>
+    <input id="sleepTime" type="time">
+
+    <p>起きた時間</p>
+    <input id="wakeTime" type="time">
+
+    <br><br>
+
+    <button id="saveButton">記録する</button>
+
+    <p id="result"></p>
+
+    <hr>
+
+    <h2>最近の記録</h2>
+
+    <div id="history"></div>
+
+
+    <script type="module">
+
+import { initializeApp }
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
+
+import {
+    getAuth,
+    GoogleAuthProvider,
+    signInWithPopup,
+    signOut,
+    onAuthStateChanged
+}
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-auth.js";
+
+import {
+    getFirestore,
+    collection,
+    addDoc,
+    query,
+    orderBy,
+    onSnapshot,
+    serverTimestamp
+}
+from "https://www.gstatic.com/firebasejs/12.19.0/firebase-firestore.js";
+
+
+const firebaseConfig = { apiKey: "AIzaSyCbkRIuW99ZMOQhoi6KmLb1ZiIjrOvU-94", authDomain: "sleep-log-72f63.firebaseapp.com", projectId: "sleep-log-72f63", storageBucket: "sleep-log-72f63.firebasestorage.app", messagingSenderId: "338565671992", appId: "1:338565671992:web:63048281ffe35247f28acd" };
+    /* ここだけ今のfirebaseConfigをそのまま入れる */
+
+
+const app = initializeApp(firebaseConfig);
+
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+const provider = new GoogleAuthProvider();
+
+
+// --------------------
+// Googleログイン
+// --------------------
+
+document.getElementById("loginButton").onclick =
+async function () {
+
+    try {
+        await signInWithPopup(auth, provider);
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        document.getElementById("loginStatus").textContent =
+            "ログインに失敗しました";
+    }
+};
+
+
+// --------------------
+// ログアウト
+// --------------------
+
+document.getElementById("logoutButton").onclick =
+async function () {
+
+    await signOut(auth);
+};
+
+
+// --------------------
+// ログイン状態
+// --------------------
+
+onAuthStateChanged(auth, function (user) {
+
+    if (user) {
+
+        document.getElementById("loginStatus").textContent =
+            "ログイン中：" + user.email;
+
+        document.getElementById("loginButton").style.display =
+            "none";
+
+        document.getElementById("logoutButton").style.display =
+            "inline-block";
+
+        showCloudHistory(user);
+    }
+
+    else {
+
+        document.getElementById("loginStatus").textContent =
+            "ログインしていません";
+
+        document.getElementById("loginButton").style.display =
+            "inline-block";
+
+        document.getElementById("logoutButton").style.display =
+            "none";
+
+        document.getElementById("history").innerHTML = "";
+    }
+});
+
+
+// --------------------
+// 睡眠時間を計算
+// --------------------
+
+function calculateSleep(sleepTime, wakeTime) {
+
+    let sleepParts = sleepTime.split(":");
+    let wakeParts = wakeTime.split(":");
+
+    let sleepMinutes =
+        Number(sleepParts[0]) * 60 +
+        Number(sleepParts[1]);
+
+    let wakeMinutes =
+        Number(wakeParts[0]) * 60 +
+        Number(wakeParts[1]);
+
+    let duration =
+        wakeMinutes - sleepMinutes;
+
+    // 日付をまたいだ場合
+    if (duration < 0) {
+        duration = duration + 24 * 60;
+    }
+
+    return duration;
+}
+
+
+// --------------------
+// Firestoreから履歴を表示
+// --------------------
+
+let stopHistoryListener = null;
+
+function showCloudHistory(user) {
+
+    if (stopHistoryListener) {
+        stopHistoryListener();
+    }
+
+    const recordsRef = collection(
+        db,
+        "users",
+        user.uid,
+        "sleepRecords"
+    );
+
+    const recordsQuery = query(
+        recordsRef,
+        orderBy("createdAt", "desc")
+    );
+
+    stopHistoryListener =
+        onSnapshot(
+            recordsQuery,
+            function (snapshot) {
+
+                const history =
+                    document.getElementById("history");
+
+                history.innerHTML = "";
+
+                snapshot.forEach(function (doc) {
+
+                    const record = doc.data();
+
+                    const item =
+                        document.createElement("p");
+
+                    item.textContent =
+                        record.date +
+                        "　" +
+                        record.sleepTime +
+                        " → " +
+                        record.wakeTime +
+                        "　" +
+                        record.hours +
+                        "時間" +
+                        record.minutes +
+                        "分";
+
+                    history.appendChild(item);
+                });
+            },
+            function (error) {
+
+                console.error(error);
+
+                document.getElementById("result").textContent =
+                    "履歴の読み込みに失敗しました";
+            }
+        );
+}
+
+
+// --------------------
+// 睡眠記録を保存
+// --------------------
+
+document.getElementById("saveButton").onclick =
+async function () {
+
+    const user = auth.currentUser;
+
+    if (!user) {
+
+        document.getElementById("result").textContent =
+            "先にGoogleでログインしてください";
+
+        return;
+    }
+
+
+    let sleepTime =
+        document.getElementById("sleepTime").value;
+
+    let wakeTime =
+        document.getElementById("wakeTime").value;
+
+
+    if (sleepTime === "" || wakeTime === "") {
+
+        document.getElementById("result").textContent =
+            "寝た時間と起きた時間を入力してください";
+
+        return;
+    }
+
+
+    let duration =
+        calculateSleep(sleepTime, wakeTime);
+
+    let hours =
+        Math.floor(duration / 60);
+
+    let minutes =
+        duration % 60;
+
+
+    let today =
+        new Date().toLocaleDateString("ja-JP");
+
+
+    try {
+
+        await addDoc(
+            collection(
+                db,
+                "users",
+                user.uid,
+                "sleepRecords"
+            ),
+            {
+                date: today,
+                sleepTime: sleepTime,
+                wakeTime: wakeTime,
+                hours: hours,
+                minutes: minutes,
+                createdAt: serverTimestamp()
+            }
+        );
+
+
+        document.getElementById("result").textContent =
+            "クラウドに記録しました："
+            + hours
+            + "時間"
+            + minutes
+            + "分";
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        document.getElementById("result").textContent =
+            "保存に失敗しました";
+    }
+};
+
+</script>
+
+</body>
+
+</html>
